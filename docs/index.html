@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Understanding ext2: The Linux Filesystem from the Inside Out</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --uber-black: #000000;
+  --uber-white: #ffffff;
+  --uber-gray: #545454;
+  --uber-light-gray: #e5e5e5;
+  --uber-green: #06c167;
+  --uber-blue: #276ef1;
+  --accent-gradient: linear-gradient(135deg, #276ef1 0%, #06c167 100%);
+  --code-bg: #1e1e2e;
+  --primary-color: #276ef1;
+  --secondary-color: #06c167;
+  --tertiary-color: #ff6b35;
+  --pro-color: #06c167;
+  --con-color: #e11d48;
+  --warn-color: #f59e0b;
+  --radius: 12px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+  color: var(--uber-black);
+  background: var(--uber-white);
+}
+
+/* Hero */
+.hero {
+  background: var(--uber-black);
+  color: var(--uber-white);
+  padding: 60px 20px 45px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 15% 50%, rgba(39,110,241,.2) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(6,193,103,.12) 0%, transparent 50%),
+    radial-gradient(circle at 85% 50%, rgba(255,107,53,.2) 0%, transparent 50%);
+}
+.hero-content { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; }
+.hero h1 {
+  font-size: 2.8rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero .subtitle { font-size: 1.15rem; color: #888; margin-bottom: 20px; }
+.hero-stats { display: flex; justify-content: center; gap: 48px; margin-top: 28px; flex-wrap: wrap; }
+.hero-stat { text-align: center; }
+.hero-stat .number {
+  font-size: 2.2rem;
+  font-weight: 700;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.hero-stat .label { font-size: .85rem; color: #888; }
+
+/* Nav */
+.nav {
+  background: var(--uber-white);
+  border-bottom: 1px solid var(--uber-light-gray);
+  padding: 10px 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.nav-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.nav a {
+  color: var(--uber-gray);
+  text-decoration: none;
+  font-size: .82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 5px 12px;
+  border-radius: 16px;
+  transition: all .2s;
+}
+.nav a:hover { background: var(--uber-light-gray); color: var(--uber-black); }
+
+/* Main */
+main { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
+section { margin-bottom: 50px; scroll-margin-top: 60px; }
+p { color: var(--uber-gray); margin-bottom: 14px; font-size: .95rem; line-height: 1.7; }
+
+h2 {
+  font-size: 1.6rem;
+  margin-bottom: 18px;
+  padding-bottom: 8px;
+  border-bottom: 3px solid;
+  border-image: var(--accent-gradient) 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Code blocks */
+pre {
+  background: var(--code-bg);
+  color: #cdd6f4;
+  padding: 20px 24px;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: .84rem;
+  line-height: 1.7;
+  margin: 16px 0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+}
+code {
+  background: rgba(0,0,0,.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: .85em;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.card {
+  background: #f9f9f9;
+  border-radius: var(--radius);
+  padding: 24px;
+  border-top: 4px solid #ccc;
+  transition: transform .15s;
+}
+.card:hover { transform: translateY(-2px); }
+.card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 10px; }
+.card p { font-size: .87rem; }
+.card ul { list-style: none; margin-top: 8px; }
+.card li { padding: 3px 0; padding-left: 18px; position: relative; font-size: .87rem; color: var(--uber-gray); }
+.card li::before { content: ''; position: absolute; left: 0; top: 11px; width: 6px; height: 6px; border-radius: 50%; background: #ccc; }
+.card.primary { border-top-color: var(--primary-color); }
+.card.primary h3 { color: var(--primary-color); }
+.card.primary li::before { background: var(--primary-color); }
+.card.secondary { border-top-color: var(--secondary-color); }
+.card.secondary h3 { color: var(--secondary-color); }
+.card.secondary li::before { background: var(--secondary-color); }
+.card.tertiary { border-top-color: var(--tertiary-color); }
+.card.tertiary h3 { color: var(--tertiary-color); }
+.card.tertiary li::before { background: var(--tertiary-color); }
+.card.accent4 { border-top-color: #a855f7; }
+.card.accent4 h3 { color: #a855f7; }
+.card.accent4 li::before { background: #a855f7; }
+
+/* Callout */
+.callout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 18px; }
+.callout {
+  background: #f0f4ff;
+  border-left: 4px solid var(--primary-color);
+  padding: 16px 20px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.callout.secondary-callout { background: #edfdf4; border-left-color: var(--secondary-color); }
+.callout.tertiary-callout { background: #fff7ed; border-left-color: var(--tertiary-color); }
+.callout.warning-callout { background: #fffbeb; border-left-color: var(--warn-color); }
+.callout h5 { font-size: .9rem; font-weight: 700; margin-bottom: 8px; color: var(--uber-black); }
+.callout p { font-size: .85rem; color: var(--uber-gray); margin-bottom: 4px; }
+.callout code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 3px; font-size: .82rem; }
+
+/* Table */
+.table-wrap { overflow-x: auto; border-radius: var(--radius); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+thead th {
+  background: var(--uber-black);
+  color: white;
+  padding: 14px 16px;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+th:first-child { min-width: 180px; }
+td { padding: 12px 16px; border-bottom: 1px solid var(--uber-light-gray); vertical-align: top; }
+tr:nth-child(even) { background: #f9f9f9; }
+tbody tr:hover { background: #f0f4ff; }
+th.col-primary { color: #93b5f9; }
+th.col-secondary { color: #7ee8b1; }
+th.col-tertiary { color: #ffb088; }
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: .76rem;
+  font-weight: 600;
+}
+.badge-pro { background: rgba(6,193,103,.12); color: #059652; }
+.badge-con { background: rgba(225,29,72,.1); color: var(--con-color); }
+.badge-warn { background: rgba(245,158,11,.12); color: #b45309; }
+.badge-neutral { background: rgba(39,110,241,.1); color: var(--primary-color); }
+
+/* Arch diagrams */
+.arch-card {
+  background: #f9f9f9;
+  border-radius: var(--radius);
+  padding: 28px;
+  overflow-x: auto;
+  border-left: 5px solid var(--primary-color);
+  margin-bottom: 24px;
+}
+.arch-card.secondary-arch { border-left-color: var(--secondary-color); }
+.arch-card.tertiary-arch { border-left-color: var(--tertiary-color); }
+.arch-card h3 { margin-bottom: 18px; font-size: 1.1rem; }
+.mermaid { display: flex; justify-content: center; }
+.mermaid svg { max-width: 100%; height: auto; }
+
+/* Step list */
+.steps { counter-reset: step; list-style: none; margin: 16px 0; }
+.steps li {
+  counter-increment: step;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--uber-light-gray);
+  font-size: .92rem;
+  color: var(--uber-gray);
+}
+.steps li:last-child { border-bottom: none; }
+.steps li::before {
+  content: counter(step);
+  min-width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: .8rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Verdict */
+.verdict {
+  background: linear-gradient(135deg, #f0f4ff 0%, #edfdf4 50%, #fff7ed 100%);
+  border: 1px solid var(--uber-light-gray);
+  border-radius: var(--radius);
+  padding: 36px;
+  margin-top: 18px;
+}
+.verdict h3 { font-size: 1.25rem; margin-bottom: 14px; }
+.verdict p { color: var(--uber-gray); font-size: .92rem; max-width: 820px; margin-bottom: 12px; }
+
+/* Implementation box */
+.impl-box {
+  background: var(--uber-black);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  margin: 20px 0;
+}
+.impl-box h3 { color: var(--uber-white); font-size: 1.1rem; margin-bottom: 16px; }
+.impl-cmd-list { list-style: none; display: grid; gap: 8px; }
+.impl-cmd-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: .87rem;
+}
+.impl-cmd-list code {
+  background: rgba(255,255,255,.1);
+  color: #7ee8b1;
+  padding: 3px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-size: .82rem;
+}
+.impl-cmd-list span { color: #888; padding-top: 2px; }
+
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent-gradient);
+  color: white;
+  text-decoration: none;
+  padding: 10px 22px;
+  border-radius: 24px;
+  font-weight: 600;
+  font-size: .9rem;
+  margin-top: 18px;
+  transition: opacity .2s;
+}
+.repo-link:hover { opacity: .85; }
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 36px 20px;
+  color: var(--uber-gray);
+  font-size: .8rem;
+  border-top: 1px solid var(--uber-light-gray);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .cards, .callout-grid { grid-template-columns: 1fr; }
+  .hero h1 { font-size: 2rem; }
+  main { padding: 20px 12px; }
+  .hero-stats { gap: 28px; }
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-content">
+    <h1>Understanding ext2</h1>
+    <p class="subtitle">The Linux Filesystem from the Inside Out — superblocks, inodes, block pointers, and directory entries explained</p>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="number">0xef53</div>
+        <div class="label">Magic Number</div>
+      </div>
+      <div class="hero-stat">
+        <div class="number">15</div>
+        <div class="label">Block Pointers per Inode</div>
+      </div>
+      <div class="hero-stat">
+        <div class="number">16 GB</div>
+        <div class="label">Max File Size (1KB blocks)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="nav">
+  <div class="nav-content">
+    <a href="#intro">Introduction</a>
+    <a href="#layout">Disk Layout</a>
+    <a href="#superblock">Superblock</a>
+    <a href="#block-groups">Block Groups</a>
+    <a href="#inodes">Inodes</a>
+    <a href="#block-pointers">Block Pointers</a>
+    <a href="#directories">Directories</a>
+    <a href="#hard-links">Hard Links</a>
+    <a href="#evolution">ext3 / ext4</a>
+    <a href="#implementation">ext2go</a>
+  </div>
+</nav>
+
+<main>
+
+  <!-- Introduction -->
+  <section id="intro">
+    <h2>Introduction</h2>
+    <p>
+      ext2 (Second Extended Filesystem) was the dominant Linux filesystem through the 1990s and early 2000s.
+      It was designed by Rémy Card and released in 1993, replacing the original ext filesystem.
+      For over a decade it was the default on nearly every Linux distribution.
+    </p>
+    <p>
+      ext2 has no journaling — no write-ahead log, no crash recovery mechanism. That's exactly what makes
+      it the ideal filesystem to learn from. There is no hidden runtime state, no background threads, no
+      complex recovery paths. It is just bytes on disk, arranged in well-defined structures at well-defined offsets.
+      Once you understand ext2, you understand the core of every filesystem that came after it.
+      ext3 and ext4 are ext2 with features bolted on — the fundamentals are identical.
+    </p>
+    <div class="callout-grid">
+      <div class="callout secondary-callout">
+        <h5>Why learn ext2?</h5>
+        <p>No journaling means no complexity. Every concept — superblock, block groups, inodes, directory entries — is visible and static on disk. Reading an ext2 image is like reading a book: there is no magic state.</p>
+      </div>
+      <div class="callout warning-callout">
+        <h5>A filesystem image is just a file</h5>
+        <p>An ext2 "disk" is a flat binary file. Every structure lives at a fixed byte offset. You can open it with any hex editor and find the superblock at byte 1024, the magic number <code>0x53 0xef</code> at bytes 1080–1081, and so on.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Disk Layout -->
+  <section id="layout">
+    <h2>On-Disk Layout</h2>
+    <p>
+      The disk is divided into fixed-size <strong>blocks</strong> (1KB, 2KB, or 4KB). Blocks are grouped
+      into <strong>block groups</strong>. Each group is self-contained: it has its own bitmaps, inode table,
+      and data blocks. The layout of the entire disk looks like this:
+    </p>
+
+    <div class="arch-card">
+      <h3 style="color:var(--primary-color)">ext2 Disk Structure</h3>
+      <pre class="mermaid">
+graph LR
+    subgraph disk["Disk Image (flat binary file)"]
+      direction LR
+      B0["Block 0\nBoot block\n(1 KB)"]
+      B1["Block 1\nSuperblock\n(1 KB, at byte 1024)"]
+      GDT["Block 2+\nGroup Descriptor\nTable"]
+      G0["Block Group 0\n(bitmaps + inode table + data)"]
+      G1["Block Group 1\n..."]
+      GN["Block Group N\n..."]
+    end
+    B0 --- B1 --- GDT --- G0 --- G1 --- GN
+
+    style B0 fill:#9ca3af,color:#fff,stroke:none
+    style B1 fill:#276ef1,color:#fff,stroke:none
+    style GDT fill:#f59e0b,color:#fff,stroke:none
+    style G0 fill:#06c167,color:#fff,stroke:none
+    style G1 fill:#06c167,color:#fff,stroke:none
+    style GN fill:#06c167,color:#fff,stroke:none
+      </pre>
+    </div>
+
+    <div class="arch-card secondary-arch">
+      <h3 style="color:var(--secondary-color)">Inside a Block Group</h3>
+      <pre class="mermaid">
+graph LR
+    BB["Block\nBitmap\n(1 block)"]
+    IB["Inode\nBitmap\n(1 block)"]
+    IT["Inode\nTable\n(N blocks)"]
+    DB["Data\nBlocks\n(remaining blocks)"]
+    BB --> IB --> IT --> DB
+
+    style BB fill:#276ef1,color:#fff,stroke:none
+    style IB fill:#ff6b35,color:#fff,stroke:none
+    style IT fill:#a855f7,color:#fff,stroke:none
+    style DB fill:#06c167,color:#fff,stroke:none
+      </pre>
+    </div>
+
+    <p>
+      For a 4MB image with 1KB blocks, there is exactly one block group containing all 4096 blocks.
+      Larger filesystems span multiple groups — the kernel tries to keep each file's inode and data blocks
+      in the same group to minimize disk seeks.
+    </p>
+  </section>
+
+  <!-- Superblock -->
+  <section id="superblock">
+    <h2>The Superblock</h2>
+    <p>
+      The superblock is the root of everything. It always lives at byte offset <strong>1024</strong> on the disk
+      and is exactly 1024 bytes long. The first thing any filesystem driver does is read the superblock
+      and check the magic number. If the magic doesn't match, it's not ext2.
+    </p>
+    <pre>Byte offset 1024:
+┌──────────────────────────────────────────────────────────────┐
+│  s_inodes_count   (4B)  │  s_blocks_count   (4B)  │ ...     │
+│  s_free_blocks    (4B)  │  s_free_inodes    (4B)  │ ...     │
+│  s_first_data_block (4B)│  s_log_block_size (4B)  │ ...     │
+│  s_magic = 0xef53 (2B)  │  s_state    (2B)        │ ...     │
+│  s_uuid           [16B] │  s_volume_name   [16B]  │ ...     │
+└──────────────────────────────────────────────────────────────┘</pre>
+
+    <div class="callout-grid">
+      <div class="callout">
+        <h5>s_magic = 0xef53</h5>
+        <p>Always the second field checked (after reading). If this is wrong, abort — this is not an ext2 filesystem. Stored little-endian so on disk it appears as <code>0x53 0xef</code>.</p>
+      </div>
+      <div class="callout secondary-callout">
+        <h5>s_log_block_size</h5>
+        <p>Block size = <code>1024 &lt;&lt; s_log_block_size</code>. So: 0 → 1KB, 1 → 2KB, 2 → 4KB. This single field controls almost all offset calculations in the driver.</p>
+      </div>
+      <div class="callout tertiary-callout">
+        <h5>s_first_data_block</h5>
+        <p>Which block number contains the superblock. <code>1</code> for 1KB blocks (block 0 is boot), <code>0</code> for 2KB+ blocks (superblock fits inside block 0 after the boot sector). The Group Descriptor Table is always at <code>s_first_data_block + 1</code>.</p>
+      </div>
+      <div class="callout warning-callout">
+        <h5>Superblock backups</h5>
+        <p>ext2 writes copies of the superblock into the first block of every block group (and sometimes only certain groups in the "sparse superblock" feature). <code>fsck</code> uses these to recover a corrupted primary superblock.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Block Groups -->
+  <section id="block-groups">
+    <h2>Block Groups</h2>
+    <p>
+      The disk is divided into equally-sized block groups. Each group is independent — it has its own
+      accounting structures and a slice of the total inode and data space. The
+      <strong>Group Descriptor Table</strong> (a 32-byte struct per group, located right after the superblock)
+      tells the driver where to find the bitmaps and inode table for each group.
+    </p>
+
+    <div class="cards">
+      <div class="card primary">
+        <h3>Block Bitmap</h3>
+        <p>One bit per block in the group. <code>0</code> = free, <code>1</code> = allocated. The driver scans this to find free blocks when writing new data.</p>
+        <ul>
+          <li>Always 1 block in size</li>
+          <li>Limits group size to BlockSize × 8 blocks</li>
+          <li>1KB block → max 8192 blocks/group</li>
+        </ul>
+      </div>
+      <div class="card secondary">
+        <h3>Inode Bitmap</h3>
+        <p>One bit per inode slot in the group. <code>0</code> = free inode, <code>1</code> = in use. Scanned when creating a new file or directory.</p>
+        <ul>
+          <li>Always 1 block in size</li>
+          <li>Max inodes per group = BlockSize × 8</li>
+          <li>Set at filesystem creation time</li>
+        </ul>
+      </div>
+      <div class="card tertiary">
+        <h3>Inode Table</h3>
+        <p>A contiguous array of fixed-size inode structs (128 bytes each for rev0, configurable in rev1). Every file and directory maps to exactly one row in this table.</p>
+        <ul>
+          <li>Inode #1 = bad blocks inode</li>
+          <li>Inode #2 = root directory (always)</li>
+          <li>Inodes #3–10 = reserved by ext2</li>
+        </ul>
+      </div>
+      <div class="card accent4">
+        <h3>Data Blocks</h3>
+        <p>The remaining blocks in the group store the actual content of files and directories. The block bitmap tracks which of these are in use.</p>
+        <ul>
+          <li>File data blocks</li>
+          <li>Directory entry blocks</li>
+          <li>Indirect pointer blocks</li>
+        </ul>
+      </div>
+    </div>
+
+    <p style="margin-top:18px">
+      The group descriptor struct (<code>bg_block_bitmap</code>, <code>bg_inode_bitmap</code>,
+      <code>bg_inode_table</code>) gives the <em>absolute block number</em> of each structure. To reach
+      the inode table for group 0: read <code>bg_inode_table × BlockSize</code> bytes into the file.
+    </p>
+  </section>
+
+  <!-- Inodes -->
+  <section id="inodes">
+    <h2>Inodes</h2>
+    <p>
+      An inode is a 128-byte struct that represents a file, directory, symlink, or device.
+      <strong>Inodes do not store filenames.</strong> Filenames live in directory entries.
+      An inode only knows about its content and metadata.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Size</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>i_mode</code></td><td>2 bytes</td><td>File type (bits 12–15) + permissions (bits 0–8). E.g. <code>0x81A4</code> = regular file, <code>rw-r--r--</code></td></tr>
+          <tr><td><code>i_uid</code> / <code>i_gid</code></td><td>2 bytes each</td><td>Owner user and group IDs</td></tr>
+          <tr><td><code>i_size</code></td><td>4 bytes</td><td>File size in bytes (lower 32 bits; upper 32 in <code>i_dir_acl</code> for large files)</td></tr>
+          <tr><td><code>i_atime</code> / <code>i_ctime</code> / <code>i_mtime</code> / <code>i_dtime</code></td><td>4 bytes each</td><td>Access, change, modification, deletion timestamps (Unix epoch)</td></tr>
+          <tr><td><code>i_links_count</code></td><td>2 bytes</td><td>Number of hard links pointing to this inode. When it reaches 0 and no process holds it open, the blocks are freed.</td></tr>
+          <tr><td><code>i_blocks</code></td><td>4 bytes</td><td>Number of 512-byte sectors allocated (not filesystem blocks). Used by the OS for disk usage accounting.</td></tr>
+          <tr><td><code>i_block[15]</code></td><td>60 bytes</td><td>The block pointer array — direct and indirect pointers to data blocks. The most important field.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:16px">
+      To locate inode number <em>N</em> on disk:
+    </p>
+    <pre>group_index = (N - 1) / inodes_per_group
+local_index = (N - 1) % inodes_per_group
+offset = group[group_index].inode_table * block_size + local_index * inode_size</pre>
+    <p>Inode numbers are 1-based. Root is always inode 2.</p>
+  </section>
+
+  <!-- Block Pointers -->
+  <section id="block-pointers">
+    <h2>Block Pointer Tree</h2>
+    <p>
+      The <code>i_block[15]</code> array is a small tree that maps a file's logical byte range to physical
+      disk blocks. The first 12 entries are <em>direct</em> pointers — they point straight to data blocks.
+      The remaining 3 entries add levels of indirection to support larger files.
+    </p>
+
+    <div class="arch-card">
+      <h3 style="color:var(--primary-color)">Block Pointer Layout</h3>
+      <pre class="mermaid">
+graph TD
+    I["inode.i_block[15]"]
+
+    I -->|"[0..11] direct"| D0["data block"]
+    I -->|"[0..11] direct"| D1["data block"]
+    I -->|"..."| Dn["... (12 direct total)"]
+
+    I -->|"[12] single-indirect"| SI["indirect block\n(256 block numbers)"]
+    SI --> SD0["data block"]
+    SI --> SD1["data block"]
+    SI --> SDn["... (256 total)"]
+
+    I -->|"[13] double-indirect"| DI["indirect block\n(256 pointers)"]
+    DI --> DI2["indirect block\n(256 block numbers)"]
+    DI --> DI3["..."]
+    DI2 --> DD0["data block"]
+    DI2 --> DD1["..."]
+
+    I -->|"[14] triple-indirect"| TI["..."]
+
+    style I fill:#276ef1,color:#fff,stroke:none
+    style SI fill:#ff6b35,color:#fff,stroke:none
+    style DI fill:#a855f7,color:#fff,stroke:none
+    style TI fill:#545454,color:#fff,stroke:none
+      </pre>
+    </div>
+
+    <div class="table-wrap" style="margin-top:20px">
+      <table>
+        <thead>
+          <tr>
+            <th>Level</th>
+            <th>Pointers</th>
+            <th class="col-primary">Capacity (1KB blocks)</th>
+            <th class="col-secondary">Capacity (4KB blocks)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Direct (<code>i_block[0..11]</code>)</td><td>12</td><td>12 KB</td><td>48 KB</td></tr>
+          <tr><td>Single-indirect (<code>i_block[12]</code>)</td><td>256</td><td>+ 256 KB</td><td>+ 4 MB</td></tr>
+          <tr><td>Double-indirect (<code>i_block[13]</code>)</td><td>256²</td><td>+ 64 MB</td><td>+ 1 GB</td></tr>
+          <tr><td>Triple-indirect (<code>i_block[14]</code>)</td><td>256³</td><td>+ 16 GB</td><td>+ 256 GB</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:16px">
+      With 1KB blocks and 4-byte block numbers, each indirect block holds <code>1024 / 4 = 256</code> pointers.
+      A file over 12KB triggers the single-indirect pointer; over 268KB triggers double-indirect.
+      In practice, the vast majority of files fit entirely in the 12 direct blocks.
+    </p>
+    <div class="callout-grid" style="margin-top:16px">
+      <div class="callout secondary-callout">
+        <h5>Short symlinks are stored inline</h5>
+        <p>If a symlink target is ≤ 60 bytes, ext2 stores it directly inside the <code>i_block</code> array itself (interpreting the 60 bytes as a character string), avoiding an extra block allocation entirely.</p>
+      </div>
+      <div class="callout">
+        <h5>i_blocks counts 512-byte sectors</h5>
+        <p><code>i_blocks</code> in the inode counts 512-byte units regardless of filesystem block size. A file using 3 data blocks of 1KB each has <code>i_blocks = 6</code> (3 × 2 sectors). This field is only used by <code>du</code> and stat, not for reading the file.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Directories -->
+  <section id="directories">
+    <h2>Directory Entries &amp; Path Resolution</h2>
+    <p>
+      A directory is just a file with a special <code>i_mode</code> type bit. Its data blocks contain a
+      packed, variable-length linked list of <strong>directory entry</strong> records. Each record maps
+      one filename to one inode number.
+    </p>
+    <pre>struct ext2_dir_entry {
+    uint32  inode;       // inode number this name points to (0 = deleted)
+    uint16  rec_len;     // byte length of this record including name + padding
+    uint8   name_len;    // actual byte length of the name string
+    uint8   file_type;   // 1=regular, 2=dir, 3=char, 4=block, 5=fifo, 6=sock, 7=symlink
+    char    name[];      // name bytes — NOT null terminated
+};</pre>
+    <p>
+      Records are packed end-to-end within a block. <code>rec_len</code> is always rounded up to a
+      4-byte boundary. The last record in a block has a <code>rec_len</code> that extends to the end of
+      the block, absorbing any slack space. Deleting an entry sets <code>inode = 0</code> and merges
+      its space into the previous record by extending that record's <code>rec_len</code>.
+    </p>
+
+    <h3 style="margin: 20px 0 10px; font-size:1.1rem;">Path Resolution: <code>/docs/notes.txt</code></h3>
+    <ol class="steps">
+      <li>Start at <strong>inode #2</strong> (root directory — always hardcoded). Read its data blocks as directory entries.</li>
+      <li>Scan entries for <code>name == "docs"</code>. Found: <code>inode = 13</code>.</li>
+      <li>Load inode #13. It is a directory. Read its data blocks as directory entries.</li>
+      <li>Scan entries for <code>name == "notes.txt"</code>. Found: <code>inode = 15</code>.</li>
+      <li>Load inode #15. It is a regular file. Read its block list and concatenate data blocks up to <code>i_size</code> bytes.</li>
+    </ol>
+
+    <p>
+      Every path traversal — no matter how deep — is exactly this loop: load inode, read directory entries,
+      find matching name, follow inode number, repeat. There is no inode cache in ext2 itself; that's the
+      kernel's job.
+    </p>
+
+    <div class="callout warning-callout" style="margin-top:16px">
+      <h5>Filenames are not in the inode</h5>
+      <p>The inode has no idea what it's named. Multiple directory entries in different directories can point to the same inode number. That's a hard link — and it's why <code>mv</code> within the same filesystem is instantaneous: it just adds a new directory entry and removes the old one. No data moves.</p>
+    </div>
+  </section>
+
+  <!-- Hard Links -->
+  <section id="hard-links">
+    <h2>Hard Links vs. Inodes</h2>
+    <p>
+      Because filenames and inodes are separate, the same inode can be referenced by multiple
+      directory entries — potentially in different directories. This is a <strong>hard link</strong>.
+    </p>
+    <div class="cards">
+      <div class="card primary">
+        <h3>Hard Links</h3>
+        <p>Multiple directory entries, same inode number. Each link increments <code>i_links_count</code>. Deleting one link decrements it.</p>
+        <ul>
+          <li>Cannot cross filesystem boundaries</li>
+          <li>Cannot link directories (prevents cycles)</li>
+          <li>All links are equal — no "original"</li>
+          <li>File freed only when count reaches 0</li>
+        </ul>
+      </div>
+      <div class="card secondary">
+        <h3>Unlinking (deletion)</h3>
+        <p>The <code>unlink()</code> system call removes a directory entry and decrements <code>i_links_count</code>. The inode and data blocks are freed only when the count reaches 0 <em>and</em> no process has the file open.</p>
+        <ul>
+          <li>This is why open files survive <code>rm</code></li>
+          <li>i_dtime records when count hit 0</li>
+          <li>Block bitmap bits cleared on free</li>
+        </ul>
+      </div>
+      <div class="card tertiary">
+        <h3>Symbolic Links</h3>
+        <p>A different inode type (<code>i_mode</code> bits = <code>0xA000</code>). The "content" is a path string. Can cross filesystem boundaries. The target may not exist.</p>
+        <ul>
+          <li>Short targets (≤60 chars) stored in <code>i_block</code> directly</li>
+          <li>Long targets stored in a data block</li>
+          <li>i_links_count is always 1</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ext3 / ext4 -->
+  <section id="evolution">
+    <h2>What ext3 and ext4 Add</h2>
+    <p>
+      ext2 became ext3 and ext4 through incremental additions. The core structures — superblock, block
+      groups, inodes, directory entries — are preserved in all three. The magic number changes, and
+      new feature flags in the superblock gate the new capabilities.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="col-primary">ext2</th>
+            <th class="col-secondary">ext3</th>
+            <th class="col-tertiary">ext4</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Journaling</td>
+            <td><span class="badge badge-con">None</span></td>
+            <td><span class="badge badge-pro">Journal inode</span></td>
+            <td><span class="badge badge-pro">Journal + checksums</span></td>
+          </tr>
+          <tr>
+            <td>Block addressing</td>
+            <td><span class="badge badge-neutral">32-bit</span></td>
+            <td><span class="badge badge-neutral">32-bit</span></td>
+            <td><span class="badge badge-pro">48-bit</span></td>
+          </tr>
+          <tr>
+            <td>File size limit</td>
+            <td>16 GB (1KB blocks)</td>
+            <td>16 GB (1KB blocks)</td>
+            <td>16 TB</td>
+          </tr>
+          <tr>
+            <td>FS size limit</td>
+            <td>4 TB</td>
+            <td>4 TB</td>
+            <td>1 EB</td>
+          </tr>
+          <tr>
+            <td>Large files (data structure)</td>
+            <td>Block pointer tree</td>
+            <td>Block pointer tree</td>
+            <td><span class="badge badge-pro">Extents (B-tree)</span></td>
+          </tr>
+          <tr>
+            <td>Directory indexing</td>
+            <td>Linear scan</td>
+            <td>Linear + HTree option</td>
+            <td><span class="badge badge-pro">HTree (hash B-tree)</span></td>
+          </tr>
+          <tr>
+            <td>Nanosecond timestamps</td>
+            <td><span class="badge badge-con">No</span></td>
+            <td><span class="badge badge-con">No</span></td>
+            <td><span class="badge badge-pro">Yes</span></td>
+          </tr>
+          <tr>
+            <td>Online defrag</td>
+            <td><span class="badge badge-con">No</span></td>
+            <td><span class="badge badge-con">No</span></td>
+            <td><span class="badge badge-pro">Yes (e4defrag)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout-grid" style="margin-top:18px">
+      <div class="callout">
+        <h5>ext3 journaling</h5>
+        <p>The journal is stored in a special inode (inode #8 by default). Before writing metadata, the kernel logs the intended change to the journal. After a crash, <code>fsck</code> replays the journal instead of scanning the whole disk — mount time goes from minutes to seconds.</p>
+      </div>
+      <div class="callout secondary-callout">
+        <h5>ext4 extents</h5>
+        <p>Instead of 15 block pointers, ext4 inodes store a B-tree of <em>extents</em> — each extent is a (start block, length) pair describing a contiguous run. A 1GB file stored contiguously needs only 1 extent instead of thousands of block pointers. Reduces fragmentation and speeds up large file I/O.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Implementation -->
+  <section id="implementation">
+    <h2>ext2go: A Working Implementation</h2>
+    <p>
+      To make these concepts concrete, I built <strong>ext2go</strong> — a read-only ext2 filesystem
+      reader in Go, written from scratch in ~300 lines across 7 files. It uses
+      <code>encoding/binary</code> to parse the raw on-disk structs with no dependencies.
+    </p>
+
+    <div class="impl-box">
+      <h3>Commands</h3>
+      <ul class="impl-cmd-list">
+        <li>
+          <code>ext2go &lt;image&gt; info</code>
+          <span>Superblock metadata — UUID, block size, inode count, block group layout</span>
+        </li>
+        <li>
+          <code>ext2go &lt;image&gt; ls [path]</code>
+          <span>List directory entries with permissions, timestamps, and sizes</span>
+        </li>
+        <li>
+          <code>ext2go &lt;image&gt; read &lt;path&gt;</code>
+          <span>Print file contents to stdout by resolving the block pointer tree</span>
+        </li>
+        <li>
+          <code>ext2go &lt;image&gt; stat &lt;path&gt;</code>
+          <span>Show raw inode fields: mode, timestamps, links, and the full block list</span>
+        </li>
+      </ul>
+      <a href="https://github.com/uMetalooper/ext2go" target="_blank" class="repo-link">
+        &#xe000; View on GitHub: uMetalooper/ext2go
+      </a>
+    </div>
+
+    <div class="cards" style="margin-top:20px">
+      <div class="card primary">
+        <h3>disk.go</h3>
+        <p>Raw I/O wrapper over the image file. <code>readAt(offset)</code> and <code>readBlock(n)</code> are the only primitives everything else uses.</p>
+      </div>
+      <div class="card secondary">
+        <h3>superblock.go</h3>
+        <p>Parses the superblock struct at byte 1024. Validates the magic number. Computes block size and inode size from the raw fields.</p>
+      </div>
+      <div class="card tertiary">
+        <h3>group.go</h3>
+        <p>Reads the Group Descriptor Table. Each 32-byte entry gives the block numbers of the bitmaps and inode table for one block group.</p>
+      </div>
+      <div class="card accent4">
+        <h3>inode.go</h3>
+        <p>Parses inode structs and resolves the block pointer tree — walking direct, single-indirect, double-indirect, and triple-indirect pointers to produce a flat block list.</p>
+      </div>
+      <div class="card primary">
+        <h3>dir.go</h3>
+        <p>Reads directory entries from a directory inode's data blocks. Walks the packed <code>rec_len</code>-linked list and returns (inode, name) pairs.</p>
+      </div>
+      <div class="card secondary">
+        <h3>fs.go</h3>
+        <p>High-level API: <code>mount()</code>, path resolution by walking inodes, <code>ls()</code>, <code>readFile()</code>, and <code>stat()</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Summary -->
+  <section id="summary">
+    <div class="verdict">
+      <h3>Key Takeaways</h3>
+      <p><strong>A filesystem is just a binary format.</strong> Every structure — superblock, bitmaps, inode table, directory entries — has a fixed location and layout on disk. There is no magic state you cannot inspect.</p>
+      <p><strong>Inodes and names are separate.</strong> An inode represents a file's content and metadata. Directory entries map human-readable names to inode numbers. This separation enables hard links, atomic renames, and open-file survival across deletion.</p>
+      <p><strong>The block pointer tree scales through indirection.</strong> 12 direct pointers cover small files efficiently. Three levels of indirect blocks extend coverage to 16+ GB without changing the inode size.</p>
+      <p><strong>ext3 and ext4 are ext2 plus features.</strong> Journaling, extents, and larger limits are layered on the same core concepts. Understanding ext2 means understanding all three.</p>
+    </div>
+  </section>
+
+  <!-- Further Reading -->
+  <section id="further-reading">
+    <h2>Further Reading</h2>
+    <div class="callout-grid">
+      <div class="callout">
+        <h5>The ext2 Specification</h5>
+        <p>The official specification documents every struct field, every flag bit, and every algorithm. The authoritative reference: <a href="https://www.nongnu.org/ext2-doc/ext2.html" target="_blank">nongnu.org/ext2-doc/ext2.html</a></p>
+      </div>
+      <div class="callout secondary-callout">
+        <h5>Linux Kernel Source</h5>
+        <p>The real implementation lives in <code>fs/ext2/</code> in the Linux kernel. Start with <code>ext2.h</code> for struct definitions: <a href="https://github.com/torvalds/linux/blob/master/fs/ext2/ext2.h" target="_blank">torvalds/linux on GitHub</a></p>
+      </div>
+      <div class="callout tertiary-callout">
+        <h5>ext2py</h5>
+        <p>The Python implementation that inspired ext2go. Compact and readable — good for comparing parsing approaches: <a href="https://github.com/EarlGray/ext2py" target="_blank">EarlGray/ext2py on GitHub</a></p>
+      </div>
+      <div class="callout warning-callout">
+        <h5>Try It Yourself</h5>
+        <p>Create a test image with <code>mke2fs</code>, write files with <code>debugfs</code>, and poke at it with <code>xxd</code>. Byte 1080 should always be <code>0x53</code> and byte 1081 should be <code>0xef</code>.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Written April 2026 &mdash; Generated with <a href="https://github.com/uMetalooper/ext2go" target="_blank">ext2go</a> as a companion to hands-on ext2 exploration.
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontSize: '13px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif'
+    },
+    flowchart: {
+      curve: 'basis',
+      padding: 16,
+      htmlLabels: true,
+      useMaxWidth: true
+    }
+  });
+</script>
+
+</body>
+</html>
